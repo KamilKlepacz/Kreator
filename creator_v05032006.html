@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<title>Tshirt Creator</title>
+
+<script src="https://unpkg.com/konva@9/konva.min.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Roboto&family=Lobster&family=Pacifico&display=swap" rel="stylesheet">
+
+<style>
+
+body{
+margin:0;
+background:url('/assets/bg.png') center/cover no-repeat;
+font-family:Arial;
+}
+
+#topMenu{
+display:flex;
+gap:10px;
+background:rgba(255,255,255,0.95);
+padding:10px;
+margin:15px;
+border-radius:8px;
+box-shadow:0 3px 8px rgba(0,0,0,0.25);
+}
+
+button{
+padding:6px 12px;
+cursor:pointer;
+}
+
+#rightPanel{
+position:fixed;
+top:20px;
+right:20px;
+width:230px;
+background:rgba(255,255,255,0.95);
+border-radius:8px;
+padding:10px;
+display:flex;
+flex-direction:column;
+gap:10px;
+box-shadow:0 3px 8px rgba(0,0,0,0.25);
+z-index:10;
+}
+
+#container{
+width:100vw;
+height:70vh;
+}
+
+#textEditor{
+position:fixed;
+bottom:0;
+left:0;
+width:100%;
+background:rgba(255,255,255,0.95);
+padding:10px;
+display:flex;
+gap:10px;
+z-index:10;
+}
+
+</style>
+</head>
+
+<body>
+
+<div id="topMenu">
+
+<button type="button" id="drawMode">✏️ Rysuj</button>
+<button type="button" id="selectMode">🖱️ Select</button>
+<button type="button" id="addStickerBtn">📌 Naklejka</button>
+<button type="button" id="addImageBtn">🖼️ Dodaj obraz</button>
+<button type="button" id="exportBtn"  disabled>📥 Eksport PNG</button> <!-- Obecnie nie działa poprawnie -->
+<button type="button" id="undoBtn">↩️ Cofnij</button>
+
+</div>
+
+
+<div id="rightPanel">
+
+<label>Warstwa
+<select id="layerSelect">
+<option value="background">Tło</option>
+<option value="main" selected>Główna</option>
+<option value="addon">Dodatki</option>
+</select>
+</label>
+
+<label>Kolor
+<input type="color" id="color" value="#000000">
+</label>
+
+<label>Rozmiar pędzla / tekstu
+<input type="range" id="size" min="2" max="100" value="36">
+</label>
+
+<label>Czcionka
+<select id="font">
+<option value="Arial">Arial</option>
+<option value="Verdana">Verdana</option>
+<option value="Georgia">Georgia</option>
+<option value="Courier New">Courier New</option>
+<option value="Roboto">Roboto</option>
+<option value="Lobster">Lobster</option>
+<option value="Pacifico">Pacifico</option>
+</select>
+</label>
+
+<div id="stickerPanel" style="display:none;gap:5px;flex-wrap:wrap;">	<!-- Przykładowe naklejki, funkcjonalność działa -->
+<img class="sticker" src="https://openmoji.org/data/color/svg/1F600.svg">
+<img class="sticker" src="https://openmoji.org/data/color/svg/1F602.svg">
+<img class="sticker" src="https://openmoji.org/data/color/svg/1F609.svg">
+</div>
+
+<input type="file" id="imageLoader" style="display:none" accept="image/*">
+
+</div>
+
+
+<div id="container"></div>
+
+
+<div id="textEditor">
+
+<textarea id="textInput" placeholder="Edytuj tekst..."></textarea>	<!-- dobrze żeby tekst się dało zakrzywiać, docelowo może generator albo jakieś źródła -->
+<button type="button" id="applyText">➕ Dodaj / Zapisz tekst</button>
+
+</div>
+
+
+
+<script>
+const stage = new Konva.Stage({
+container:"container",
+width:window.innerWidth,
+height:window.innerHeight*0.7
+});
+
+
+// Podział strony
+
+const shirtLayer = new Konva.Layer();
+const backgroundDrawLayer = new Konva.Layer();
+const mainDrawLayer = new Konva.Layer();
+const addonDrawLayer = new Konva.Layer();
+const uiLayer = new Konva.Layer();
+
+stage.add(shirtLayer);
+stage.add(backgroundDrawLayer);
+stage.add(mainDrawLayer);
+stage.add(addonDrawLayer);
+stage.add(uiLayer);
+
+
+const tr = new Konva.Transformer({
+rotateEnabled:true
+});
+
+uiLayer.add(tr);
+
+
+// Historia
+
+let history=[];
+
+
+// Canvas
+
+const printArea={
+x:stage.width()/2-180,
+y:stage.height()/2-210,
+width:360,
+height:420
+};
+
+const guide=new Konva.Rect({
+x:printArea.x,
+y:printArea.y,
+width:printArea.width,
+height:printArea.height,
+stroke:"rgba(255,255,255,0.4)",
+dash:[6,4],
+listening:false
+});
+
+uiLayer.add(guide);
+
+
+// "KOSZULKA" - background dla canvasu 
+
+const shirtImg=new Image();
+shirtImg.src="assets/tshirt.png";
+
+shirtImg.onload=()=>{
+
+const scale=Math.min(
+stage.width()/shirtImg.width,
+stage.height()/shirtImg.height
+);
+
+const shirt=new Konva.Image({
+
+image:shirtImg,
+x:(stage.width()-shirtImg.width*scale)/2,
+y:(stage.height()-shirtImg.height*scale)/2,
+width:shirtImg.width*scale,
+height:shirtImg.height*scale,
+listening:false
+
+});
+
+shirtLayer.add(shirt);
+shirtLayer.draw();
+
+};
+
+
+// Wybór warstwy
+
+let activeLayer=mainDrawLayer;
+
+const layerSelect=document.getElementById("layerSelect");
+
+layerSelect.addEventListener("change",()=>{
+
+if(layerSelect.value==="background")
+activeLayer=backgroundDrawLayer;
+
+if(layerSelect.value==="main")
+activeLayer=mainDrawLayer;
+
+if(layerSelect.value==="addon")
+activeLayer=addonDrawLayer;
+
+});
+
+
+// Pędzel
+
+let brushActive=false;
+let currentLine;
+
+let brushColor=document.getElementById("color").value;
+let brushSize=parseInt(document.getElementById("size").value,10);
+
+document.getElementById("color").addEventListener("input",e=>brushColor=e.target.value);
+
+document.getElementById("size").addEventListener("input",e=>brushSize=parseInt(e.target.value,10));
+
+
+document.getElementById("drawMode").onclick=()=>{
+
+brushActive=!brushActive;
+tr.nodes([]);
+
+};
+
+
+// Funkcje rysowania
+
+stage.on("mousedown",()=>{
+
+if(!brushActive)return;
+
+const pos=stage.getPointerPosition();
+
+if(pos.x<printArea.x||pos.y<printArea.y||pos.x>printArea.x+printArea.width||pos.y>printArea.y+printArea.height)
+return;
+
+currentLine=new Konva.Line({
+
+stroke:brushColor,
+strokeWidth:brushSize,
+lineCap:"round",
+lineJoin:"round",
+points:[pos.x,pos.y]
+
+});
+
+activeLayer.add(currentLine);
+history.push(currentLine);
+
+});
+
+
+stage.on("mousemove", () => {
+  if(!brushActive || !currentLine) return;
+
+  const pos = stage.getPointerPosition();
+
+  // Sprawdzanie ograniczenia w obszarze printArea
+  if(pos.x < printArea.x) pos.x = printArea.x;
+  if(pos.y < printArea.y) pos.y = printArea.y;
+  if(pos.x > printArea.x + printArea.width) pos.x = printArea.x + printArea.width;
+  if(pos.y > printArea.y + printArea.height) pos.y = printArea.y + printArea.height;
+
+  currentLine.points(currentLine.points().concat([pos.x, pos.y]));
+
+  activeLayer.batchDraw();
+});
+
+
+stage.on("mouseup",()=>currentLine=null);
+
+
+//Przycisk select
+
+let selected=null;
+
+function select(node){
+
+selected=node;
+tr.nodes([node]);
+
+if(node instanceof Konva.Text){
+
+document.getElementById("textInput").value=node.text();
+document.getElementById("size").value=node.fontSize();
+
+}
+
+}
+
+
+stage.on("click",e=>{
+
+if(e.target===stage){
+
+tr.nodes([]);
+selected=null;
+return;
+
+}
+
+select(e.target);
+
+});
+
+
+document.getElementById("selectMode").onclick=()=>{
+
+brushActive=false;
+
+if(selected)
+tr.nodes([selected]);
+
+};
+
+
+// Wczytywanie obrazu
+
+document.getElementById("addImageBtn").onclick=()=>document.getElementById("imageLoader").click();
+
+document.getElementById("imageLoader").onchange=e=>{
+
+const file=e.target.files[0];
+if(!file)return;
+
+const reader=new FileReader();
+
+reader.onload=ev=>{
+
+const img=new Image();
+img.src=ev.target.result;
+
+img.onload=()=>{
+
+const imageNode=new Konva.Image({
+
+x:printArea.x+20,
+y:printArea.y+20,
+image:img,
+width:200,
+height:200,
+draggable:true
+
+});
+
+activeLayer.add(imageNode);
+
+history.push(imageNode);
+
+select(imageNode);
+
+};
+
+};
+
+reader.readAsDataURL(file);
+
+};
+
+
+// Dodawanie naklejek
+
+const stickerPanel=document.getElementById("stickerPanel");
+
+document.getElementById("addStickerBtn").onclick=()=>{
+
+stickerPanel.style.display="flex";
+brushActive=false;
+
+};
+
+stickerPanel.onclick=e=>{
+
+if(!e.target.classList.contains("sticker"))return;
+
+const img=new Image();
+img.src=e.target.src;
+
+img.onload=()=>{
+
+const sticker=new Konva.Image({
+
+x:printArea.x+40,
+y:printArea.y+40,
+image:img,
+width:60,
+height:60,
+draggable:true
+
+});
+
+activeLayer.add(sticker);
+
+history.push(sticker);
+
+select(sticker);
+
+};
+
+};
+
+
+// Dodawanie tekstu
+
+document.getElementById("applyText").onclick=()=>{
+
+const content=document.getElementById("textInput").value;
+
+if(!content)return;
+
+let textObj=selected instanceof Konva.Text?selected:null;
+
+if(textObj){
+
+textObj.text(content);
+textObj.fontSize(parseInt(document.getElementById("size").value,10));
+textObj.fontFamily(document.getElementById("font").value);
+textObj.fill(document.getElementById("color").value);
+
+}else{
+
+textObj=new Konva.Text({
+
+x:printArea.x+20,
+y:printArea.y+20,
+text:content,
+fontSize:parseInt(document.getElementById("size").value,10),
+fontFamily:document.getElementById("font").value,
+fill:document.getElementById("color").value,
+draggable:true
+
+});
+
+activeLayer.add(textObj);
+history.push(textObj);
+select(textObj);
+
+}
+
+activeLayer.draw();
+
+};
+
+
+// przycisk undo
+
+document.getElementById("undoBtn").onclick=()=>{
+
+if(history.length===0)return;
+
+const last=history.pop();
+last.destroy();
+
+backgroundDrawLayer.draw();
+mainDrawLayer.draw();
+addonDrawLayer.draw();
+
+};
+
+
+// eksport projektu PNG - narazie zablokowany
+
+document.getElementById("exportBtn").onclick=()=>{
+
+stage.draw();
+
+const dataURL=stage.toDataURL({
+
+x:printArea.x,
+y:printArea.y,
+width:printArea.width,
+height:printArea.height,
+pixelRatio:2
+
+});
+
+const link=document.createElement("a");
+link.href=dataURL;
+link.download="projekt.png";
+link.click();
+
+};
+
+</script>
+
+</body>
+</html>
